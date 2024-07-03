@@ -1,0 +1,5 @@
+[ ] add multi-threading
+[x] render block previews for inventory
+[ ] render model previews for inventory
+[ ] add furnace
+[ ] switch to sub-chunks (16, 16, 16)
