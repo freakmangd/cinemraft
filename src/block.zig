@@ -148,7 +148,7 @@ pub fn getTransform(pos: Position) rl.Matrix {
 
 pub const PlacedOn = struct { Block, Side };
 
-pub fn onPlace(self: *Block, alloc: std.mem.Allocator, block_pos: Position, place_opts: c.ChunkManager.PlaceOpts) !void {
+pub fn onPlace(self: *Block, _: ztg.Commands, alloc: std.mem.Allocator, block_pos: Position, place_opts: c.ChunkManager.PlaceOpts) !void {
     switch (self.type) {
         .chest => {
             const dir_to_placer: Side = blk: {
@@ -350,10 +350,6 @@ pub const Index = packed struct(u24) {
         };
     }
 
-    pub fn fromUsize(x: usize, y: usize, z: usize) Index {
-        return .{ .x = @intCast(x), .y = @intCast(y), .z = @intCast(z) };
-    }
-
     pub fn toPosition(self: Index, parent_chunk: Chunk.Position) Position {
         return .{
             .x = self.x + parent_chunk.x * Chunk.horizontal_size,
@@ -388,6 +384,11 @@ pub const Index = packed struct(u24) {
             .y = @intFromFloat(world_pos.y / Block.size),
             .z = @intFromFloat(@mod(world_pos.z, Chunk.to_world_space)),
         };
+    }
+
+    pub fn fromArrayIndex(index: usize) Index {
+        const x, const y, const z = Chunk.BlockArray.position(index);
+        return init(x, y, z);
     }
 
     pub fn shift(self: Index, dir: Side, by: u8) Index {

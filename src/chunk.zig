@@ -14,13 +14,8 @@ pub const BlockModels = std.ArrayListUnmanaged(struct { Block.Index, rl.Model })
 
 blocks: *BlockArray,
 
-generation_state: union(enum) {
-    in_progress,
-    done: struct {
-        blocks_mesh: MeshData,
-        block_models: BlockModels,
-    },
-} = .in_progress,
+blocks_mesh: MeshData = .{ .alloc = undefined },
+block_models: BlockModels = .{},
 level_of_detail: u8 = 1,
 mesh_needs_rebuilt: bool = false,
 
@@ -37,20 +32,17 @@ pub fn deinit(self: *Chunk, alloc: std.mem.Allocator) void {
     for (self.blocks.items) |block| block.deinit(alloc);
     alloc.destroy(self.blocks);
 
-    switch (self.generation_state) {
-        .done => |*mesh| {
-            if (mesh.blocks_mesh.vao_id > 0) mesh.blocks_mesh.unload();
-            mesh.block_models.deinit(alloc);
-        },
-        .in_progress => {},
-    }
+    if (self.blocks_mesh.vao_id > 0) self.blocks_mesh.unload();
+    self.block_models.deinit(alloc);
 }
 
 pub fn draw(self: Chunk, pos: Chunk.Position, block_mat: rl.Material) void {
-    const transform = rl.MatrixTranslate(@floatFromInt(pos.x * Chunk.to_world_space), 0, @floatFromInt(pos.z * Chunk.to_world_space));
-    self.generation_state.done.blocks_mesh.draw(block_mat, transform);
+    if (self.blocks_mesh.vao_id == 0) return;
 
-    for (self.generation_state.done.block_models.items) |idx_model| {
+    const transform = rl.MatrixTranslate(@floatFromInt(pos.x * Chunk.to_world_space), 0, @floatFromInt(pos.z * Chunk.to_world_space));
+    self.blocks_mesh.draw(block_mat, transform);
+
+    for (self.block_models.items) |idx_model| {
         const idx, const model = idx_model;
         rl.DrawModel(model, @bitCast(idx.toWorldV(pos) + @Vector(3, f32){ Block.size / 2, 0, Block.size / 2 }), 8, rl.WHITE);
     }
@@ -74,27 +66,25 @@ pub fn generateMesh(chunk: *Chunk, alloc: std.mem.Allocator) !void {
 
     try mesh_data.upload(false);
 
-    if (chunk.generation_state == .done and chunk.generation_state.done.blocks_mesh.vao_id > 0) {
-        chunk.generation_state.done.blocks_mesh.unload();
-        chunk.generation_state.done.block_models.deinit(alloc);
+    if (chunk.blocks_mesh.vao_id > 0) {
+        chunk.blocks_mesh.unload();
+        chunk.block_models.deinit(alloc);
     }
 
-    chunk.generation_state = .{ .done = .{ .blocks_mesh = mesh_data, .block_models = models } };
+    chunk.blocks_mesh = mesh_data;
+    chunk.block_models = models;
     chunk.mesh_needs_rebuilt = false;
 }
 
-pub fn placeBlock(
+/// bare minimum of setting block in chunk
+/// doesn't do any visibility/lighting calc, doesn't call onPlace
+pub fn setBlock(
     self: *Chunk,
-    pos: Position,
-    alloc: std.mem.Allocator,
     block_index: Block.Index,
     block_type: Block.Type,
-    place_opts: c.ChunkManager.PlaceOpts,
-) !*Block {
+) *Block {
     const b = self.blocks.getPtr(block_index.x, block_index.y, block_index.z);
     b.* = .{ .type = block_type };
-    try b.onPlace(alloc, block_index.toPosition(pos), place_opts);
-
     return b;
 }
 
@@ -168,6 +158,12 @@ pub const Position = packed struct(Key) {
             .east => self.x += 1,
             .west => self.x -= 1,
         };
+    }
+
+    pub fn format(value: Position, comptime fmt: []const u8, options: std.fmt.FormatOptions, writer: anytype) !void {
+        _ = fmt;
+        _ = options;
+        try writer.print("({}, {})", .{ value.x, value.z });
     }
 };
 
