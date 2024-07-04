@@ -51,8 +51,7 @@ pub fn generate(
         for (blocks.items, 0..) |block, i| {
             if (block.type == .none) continue;
 
-            const block_x, const block_y, const block_z = c.Chunk.BlockArray.position(i);
-            const block_index = Block.Index.fromUsize(block_x, block_y, block_z);
+            const block_index = Block.Index.fromArrayIndex(i);
 
             switch (block.type.get(.model_type)) {
                 .block => {
@@ -106,7 +105,7 @@ pub fn generate(
                 continue;
             }
 
-            const block_pos = Block.Index.fromUsize(block_x, block_y, block_z);
+            const block_pos = Block.Index.init(block_x, block_y, block_z);
             const prior_vertex_count = mesh_data.vertices.items.len;
 
             for (std.enums.values(Block.Side)) |side|

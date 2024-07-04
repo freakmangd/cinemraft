@@ -25,7 +25,7 @@ pub fn include(wb: *ztg.WorldBuilder) void {
 }
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa = std.heap.GeneralPurposeAllocator(.{ .stack_trace_frames = 16 }){};
     defer _ = gpa.deinit();
     const alloc = gpa.allocator();
 
