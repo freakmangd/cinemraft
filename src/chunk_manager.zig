@@ -6,6 +6,7 @@ const zrl = @import("zrl");
 const rl = zrl.rl;
 const c = @import("init.zig");
 const chunk_gen = @import("chunk_generator.zig");
+const ChunkPipeline = @import("chunk_pipeline.zig");
 const Player = c.Player;
 const Chunk = c.Chunk;
 const BlockArray = Chunk.BlockArray;
@@ -25,11 +26,11 @@ to_be_placed: ToBePlaced = .{},
 
 loaded_chunks: LoadedChunks = .{},
 
-generate_threads: std.Thread.Pool = undefined,
-generating_chunks: std.AutoHashMapUnmanaged(Chunk.Key, *BlockArray) = .{},
+chunk_pipeline: ChunkPipeline = undefined,
 
-finished_chunks: std.ArrayListUnmanaged(struct { pos: Chunk.Position, chunk: Chunk }) = .{},
-finished_chunks_mutex: std.Thread.Mutex = .{},
+remove_chunks_timer: f32 = 0,
+
+const remove_chunks_wait = 0.5;
 
 pub fn include(comptime wb: *ztg.WorldBuilder) void {
     wb.addResource(ChunkManager, .{});
@@ -44,10 +45,12 @@ pub fn include(comptime wb: *ztg.WorldBuilder) void {
 pub fn init(cm: *ChunkManager, alloc: std.mem.Allocator, rand: std.Random) !void {
     cm.alloc = alloc;
     cm.rand = rand;
-    try cm.generate_threads.init(.{ .allocator = alloc });
+    try cm.chunk_pipeline.init(cm);
 }
 
 pub fn deinit(self: *ChunkManager) void {
+    self.chunk_pipeline.deinit();
+
     for (self.loaded_chunks.values()) |*chunk| {
         chunk.deinit(self.alloc);
     }
@@ -56,16 +59,6 @@ pub fn deinit(self: *ChunkManager) void {
     var iter = self.to_be_placed.valueIterator();
     while (iter.next()) |to_be_placed| to_be_placed.deinit(self.alloc);
     self.to_be_placed.deinit(self.alloc);
-
-    self.finished_chunks.deinit(self.alloc);
-    self.generate_threads.deinit();
-
-    var generating_iter = self.generating_chunks.valueIterator();
-    while (generating_iter.next()) |blocks| {
-        // destroy any orphaned block arrays
-        self.alloc.destroy(blocks.*);
-    }
-    self.generating_chunks.deinit(self.alloc);
 }
 
 var load_dist_idx: usize = 1;
@@ -75,32 +68,7 @@ fn update(
     input: c.Input,
     player_q: ztg.Query(.{Player.Camera}),
 ) !void {
-    blk: {
-        self.finished_chunks_mutex.lock();
-        defer self.finished_chunks_mutex.unlock();
-
-        if (self.finished_chunks.items.len == 0) break :blk;
-        const len = if (opts.timing) self.finished_chunks.items.len;
-
-        const start = if (opts.timing) std.time.milliTimestamp();
-        defer if (opts.timing) std.log.info("Put {} chunks in {}ms", .{ len, std.time.milliTimestamp() - start });
-
-        for (self.finished_chunks.items) |*finished| {
-            for (&finished.chunk.blocks.items, 0..) |*block, i| {
-                const index = Block.Index.fromArrayIndex(i);
-                try block.onPlace(com, self.alloc, index.toPosition(finished.pos), .{});
-
-                if (block.type != .none)
-                    self.calcExposedForBlockAndNeighbors(&finished.chunk, finished.pos, block, index);
-            }
-
-            finished.chunk.mesh_needs_rebuilt = true;
-            try self.loaded_chunks.put(self.alloc, finished.pos.toKey(), finished.chunk);
-        }
-
-        self.finished_chunks.clearRetainingCapacity();
-        self.generating_chunks.clearRetainingCapacity();
-    }
+    try self.chunk_pipeline.update(com);
 
     if (input.isPressed(0, .change_render_distance)) {
         load_dist_idx += 1;
@@ -129,10 +97,10 @@ fn update(
             //chunk.setLod(1);
             if (chunk.mesh_needs_rebuilt) {
                 chunks_rebuilt += 1;
-                try chunk.generateMesh(self.alloc);
+                try self.chunk_pipeline.regenChunkMesh(camera_chunk, chunk);
             }
         } else {
-            try self.generateChunk(camera_chunk);
+            try self.chunk_pipeline.newChunk(camera_chunk, self.seed);
             chunks_loaded += 1;
         }
 
@@ -154,10 +122,10 @@ fn update(
                         chunk.setLod(lod);
                         if (chunk.mesh_needs_rebuilt and chunks_rebuilt < max_chunks_rebuilt) {
                             chunks_rebuilt += 1;
-                            try chunk.generateMesh(self.alloc);
+                            try self.chunk_pipeline.regenChunkMesh(chunk_pos, chunk);
                         }
                     } else {
-                        try self.generateChunk(chunk_pos);
+                        try self.chunk_pipeline.newChunk(chunk_pos, self.seed);
                         chunks_loaded += 1;
                         if (chunks_loaded > max_chunks_loaded) break :outer;
                     }
@@ -165,12 +133,12 @@ fn update(
             }
         }
 
-        const max_remove_per_frame = 3;
         const chunk_x_min: i32 = (camera_chunk.x - load_dist) - 1;
         const chunk_x_max: i32 = (camera_chunk.x + load_dist) + 1;
         const chunk_z_min: i32 = (camera_chunk.z - load_dist) - 1;
         const chunk_z_max: i32 = (camera_chunk.z + load_dist) + 1;
 
+        const max_remove_per_frame = 3;
         var to_remove: [max_remove_per_frame]u64 = undefined;
         var to_remove_len: usize = 0;
 
@@ -185,10 +153,10 @@ fn update(
         }
 
         for (to_remove[0..to_remove_len]) |chunk_key| {
-            const chunk = self.loaded_chunks.getPtr(chunk_key).?;
-            chunk.deinit(self.alloc);
-            std.debug.assert(self.loaded_chunks.swapRemove(chunk_key));
+            self.chunk_pipeline.removeChunk(chunk_key, self.loaded_chunks.getPtr(chunk_key).?);
         }
+
+        self.remove_chunks_timer = remove_chunks_wait;
     }
 }
 
@@ -196,68 +164,72 @@ fn draw(cm: ChunkManager) !void {
     for (cm.loaded_chunks.values(), cm.loaded_chunks.keys()) |chunk, chunk_key| {
         const chunk_pos = Chunk.Position.fromKey(chunk_key);
         chunk.draw(chunk_pos, Block.material);
-    }
-}
 
-pub fn generateChunk(self: *ChunkManager, chunk_pos: Chunk.Position) !void {
-    const chunk_key = chunk_pos.toKey();
-    const gop = try self.generating_chunks.getOrPut(self.alloc, chunk_key);
-    errdefer _ = self.generating_chunks.remove(chunk_key);
-
-    if (!gop.found_existing) {
-        std.log.info("queuing chunk {} for generation...", .{chunk_pos});
-
-        const block_arr = try self.alloc.create(BlockArray);
-        block_arr.* = BlockArray.filled(.{});
-
-        gop.value_ptr.* = block_arr;
-
-        try self.generate_threads.spawn(generateChunkFn, .{ self, chunk_pos, block_arr });
-    }
-}
-
-fn generateChunkFn(self: *ChunkManager, chunk_pos: Chunk.Position, block_arr: *BlockArray) void {
-    var chunk: Chunk = .{ .blocks = block_arr };
-
-    chunk_gen.generate(self.seed, &chunk, chunk_pos, 1) catch |err| {
-        std.log.err("thread(chunk_gen): failed to generate chunk {}. Error: {}", .{ chunk_pos, err });
-        return;
-    };
-
-    self.finished_chunks_mutex.lock();
-    defer self.finished_chunks_mutex.unlock();
-
-    self.finished_chunks.append(self.alloc, .{
-        .chunk = chunk,
-        .pos = chunk_pos,
-    }) catch |err| {
-        std.log.err("thread(chunk_gen): failed to append chunk {}. Error: {}", .{ chunk_pos, err });
-        return;
-    };
-}
-
-pub fn generateChunkBlocking(self: *ChunkManager, com: ztg.Commands, chunk_pos: Chunk.Position) !LoadedChunks.GetOrPutResult {
-    const chunk_key = chunk_pos.toKey();
-    const gop = try self.loaded_chunks.getOrPut(self.alloc, chunk_key);
-
-    if (!gop.found_existing) {
-        const chunk = gop.value_ptr;
-        try Chunk.init(chunk, self.alloc);
-        try chunk_gen.generate(com, self, chunk, chunk_pos, 1);
-
-        if (self.to_be_placed.getPtr(chunk_key)) |to_be_placed| {
-            for (to_be_placed.items) |index_type| {
-                const block = try chunk.setBlock(index_type[0], index_type[1], .{});
-                block.onPlace(com, self.alloc, index_type[0].toPosition(chunk_pos), .{});
-                self.calcExposedForBlockAndNeighbors(chunk, chunk_pos, block, index_type[0]);
-            }
-            to_be_placed.deinit(self.alloc);
-            _ = self.to_be_placed.remove(chunk_pos.toKey());
+        if (chunk.mesh_needs_rebuilt) {
+            rl.DrawCube(chunk_pos.toWorldZ().add(.{ .y = 28 * Block.size }).into(rl.Vector3), 20, 20, 20, rl.RED);
         }
     }
-
-    return gop;
 }
+
+//pub fn generateChunk(self: *ChunkManager, chunk_pos: Chunk.Position) !void {
+//    const chunk_key = chunk_pos.toKey();
+//    const gop = try self.generating_chunks.getOrPut(self.alloc, chunk_key);
+//    errdefer _ = self.generating_chunks.remove(chunk_key);
+//
+//    if (!gop.found_existing) {
+//        std.log.info("queuing chunk {} for generation...", .{chunk_pos});
+//
+//        const block_arr = try self.alloc.create(BlockArray);
+//        block_arr.* = BlockArray.filled(.{});
+//
+//        gop.value_ptr.* = block_arr;
+//
+//        try self.generate_threads.spawn(generateChunkFn, .{ self, chunk_pos, block_arr });
+//    }
+//}
+//
+//fn generateChunkFn(self: *ChunkManager, chunk_pos: Chunk.Position, block_arr: *BlockArray) void {
+//    var chunk: Chunk = .{ .blocks = block_arr };
+//
+//    chunk_gen.generate(self.seed, &chunk, chunk_pos, 1) catch |err| {
+//        std.log.err("thread(chunk_gen): failed to generate chunk {}. Error: {}", .{ chunk_pos, err });
+//        return;
+//    };
+//
+//    self.finished_chunks_mutex.lock();
+//    defer self.finished_chunks_mutex.unlock();
+//
+//    self.finished_chunks.append(self.alloc, .{
+//        .chunk = chunk,
+//        .pos = chunk_pos,
+//    }) catch |err| {
+//        std.log.err("thread(chunk_gen): failed to append chunk {}. Error: {}", .{ chunk_pos, err });
+//        return;
+//    };
+//}
+//
+//pub fn generateChunkBlocking(self: *ChunkManager, com: ztg.Commands, chunk_pos: Chunk.Position) !LoadedChunks.GetOrPutResult {
+//    const chunk_key = chunk_pos.toKey();
+//    const gop = try self.loaded_chunks.getOrPut(self.alloc, chunk_key);
+//
+//    if (!gop.found_existing) {
+//        const chunk = gop.value_ptr;
+//        try Chunk.init(chunk, self.alloc);
+//        try chunk_gen.generate(com, self, chunk, chunk_pos, 1);
+//
+//        if (self.to_be_placed.getPtr(chunk_key)) |to_be_placed| {
+//            for (to_be_placed.items) |index_type| {
+//                const block = try chunk.setBlock(index_type[0], index_type[1], .{});
+//                block.onPlace(com, self.alloc, index_type[0].toPosition(chunk_pos), .{});
+//                self.calcExposedForBlockAndNeighbors(chunk, chunk_pos, block, index_type[0]);
+//            }
+//            to_be_placed.deinit(self.alloc);
+//            _ = self.to_be_placed.remove(chunk_pos.toKey());
+//        }
+//    }
+//
+//    return gop;
+//}
 
 pub const HoveredBlockHit = struct {
     position: Block.Position,
