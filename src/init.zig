@@ -51,6 +51,7 @@ pub const Item = @import("item.zig").Item;
 
 pub const Chat = @import("chat.zig");
 
+pub const Array2d = @import("array2d.zig").Array2d;
 pub const Array3d = @import("array3d.zig").Array3d;
 pub const Button = @import("button.zig");
 

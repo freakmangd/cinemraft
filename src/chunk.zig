@@ -55,25 +55,13 @@ pub fn setLod(self: *Chunk, lod: u8) void {
     self.mesh_needs_rebuilt = true;
 }
 
-pub fn generateMesh(chunk: *Chunk, alloc: std.mem.Allocator) !void {
-    var mesh_data: MeshData = .{ .alloc = alloc };
-    errdefer mesh_data.deinit();
-
-    var models: c.Chunk.BlockModels = .{};
-    errdefer models.deinit(alloc);
-
-    try mesh_data.generate(&models, chunk.blocks, chunk.level_of_detail);
-
-    try mesh_data.upload(false);
-
+pub fn uploadMesh(chunk: *Chunk, alloc: std.mem.Allocator) !void {
     if (chunk.blocks_mesh.vao_id > 0) {
         chunk.blocks_mesh.unload();
         chunk.block_models.deinit(alloc);
     }
 
-    chunk.blocks_mesh = mesh_data;
-    chunk.block_models = models;
-    chunk.mesh_needs_rebuilt = false;
+    try chunk.blocks_mesh.upload(false);
 }
 
 /// bare minimum of setting block in chunk
@@ -122,6 +110,13 @@ pub const Position = packed struct(Key) {
             @floatFromInt(self.x * Chunk.to_world_space),
             0,
             @floatFromInt(self.z * Chunk.to_world_space),
+        };
+    }
+
+    pub inline fn toWorldZ(self: Position) ztg.Vec3 {
+        return .{
+            .x = @floatFromInt(self.x * Chunk.to_world_space),
+            .z = @floatFromInt(self.z * Chunk.to_world_space),
         };
     }
 
