@@ -61,7 +61,7 @@ pub const Camera = struct {
     }
 };
 
-pub fn spawn(com: ztg.Commands, pos: ztg.Vec3) !ztg.EntityHandle {
+pub fn spawn(alloc: std.mem.Allocator, com: ztg.Commands, pos: ztg.Vec3) !ztg.EntityHandle {
     return com.newEntWith(.{
         Player{},
         ztg.base.Transform.fromPos(pos),
@@ -69,7 +69,9 @@ pub fn spawn(com: ztg.Commands, pos: ztg.Vec3) !ztg.EntityHandle {
             .bounds = c.BoundingBox.fromBox(.{}, ztg.vec3(c.Block.size * 0.8, c.Block.size * 1.9, c.Block.size * 0.8)),
         },
         Camera.init(pos),
-        Gui{},
+        Gui{
+            .chat = .{ .alloc = alloc },
+        },
     });
 }
 
@@ -93,17 +95,13 @@ fn update(
         player.jump_buffer -= dt;
 
         if (gui.state == .closed) {
+            // zig fmt: off
             try updateWithInput(
-                com,
-                input,
-                player,
-                pc,
-                gui,
-                chunks,
-                collider,
-                pos,
-                &movement,
+                com, input, player,
+                pc, gui, chunks,
+                collider, pos, &movement,
             );
+            // zig fmt: on
         }
 
         var target = ztg.from3(pc.camera.target);
@@ -204,7 +202,7 @@ fn updateWithInput(
 
     if (input.isPressed(0, .toggle_flight)) {
         can_fly = !can_fly;
-        std.log.info("toggled flight {}", .{can_fly});
+        try gui.chat.sendMessageSystem("toggled flight {}", .{can_fly});
     }
 
     if (input.isPressed(0, .use)) use: {
