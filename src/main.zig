@@ -86,8 +86,8 @@ pub fn main() !void {
     }
 }
 
-fn load(com: ztg.Commands, input: *c.Input) !void {
-    _ = try c.Player.spawn(com, ztg.vec3(0, 24 * c.Block.size, 0));
+fn load(alloc: std.mem.Allocator, com: ztg.Commands, input: *c.Input) !void {
+    _ = try c.Player.spawn(alloc, com, ztg.vec3(0, 24 * c.Block.size, 0));
 
     try input.addBindings(0, .{ .axes = .{
         .horiz = &.{zrl.input.kbAxis(rl.KEY_D, rl.KEY_A)},

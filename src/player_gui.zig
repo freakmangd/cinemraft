@@ -22,7 +22,7 @@ hovered_block: ?rl.Vector3 = null,
 ct_craft_slots: [3 * 3]Inventory.Slot = .{.empty} ** (3 * 3),
 ct_output_slot: Inventory.OutputSlot = .{ .slot = .empty },
 
-chat: c.Chat = .{},
+chat: c.Chat,
 
 state: union(enum) {
     closed,
@@ -60,8 +60,8 @@ pub const TimingInfo = struct {
     frame_count: f32 = 1,
 };
 
-pub fn onRemoved(gui: *Gui, alloc: std.mem.Allocator) !void {
-    gui.chat.deinit(alloc);
+pub fn onRemoved(gui: *Gui) !void {
+    gui.chat.deinit();
 }
 
 fn update(
@@ -95,7 +95,7 @@ fn update(
 
         const ms_pos = rl.GetMousePosition();
 
-        const closed = try gui.chat.update(com, alloc, tr.getPos(), player);
+        const closed = try gui.chat.update(com, tr.getPos(), player);
 
         switch (gui.state) {
             .closed => {
@@ -152,7 +152,7 @@ fn update(
             },
             .chat => {
                 if (closed) {
-                    try gui.chat.close(alloc);
+                    try gui.chat.close();
 
                     gui.state = .closed;
                     rl.DisableCursor();

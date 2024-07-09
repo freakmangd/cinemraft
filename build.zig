@@ -49,6 +49,26 @@ pub fn build(b: *std.Build) void {
 
     exe.root_module.addImport("zmath", zentig_dep.module("zmath"));
 
+    const exe_check = b.addExecutable(.{
+        .name = "study_timer",
+        .root_source_file = b.path("src/main.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+
+    exe_check.root_module.addIncludePath(raylib_dep.path("src"));
+    exe_check.root_module.addCSourceFile(.{ .file = b.path("src/rlights.c") });
+    exe_check.root_module.addImport("zentig", zrl.module("zentig"));
+    exe_check.root_module.addImport("zrl", zrl.module("zentig-raylib"));
+    exe_check.root_module.addImport("znoise", znoise_dep.module("root"));
+    exe_check.linkLibrary(znoise_dep.artifact("FastNoiseLite"));
+    exe_check.root_module.addImport("zmath", zentig_dep.module("zmath"));
+    exe_check.linkLibrary(raylib);
+    exe_check.root_module.addOptions("opts", opts);
+
+    const check = b.step("check", "Check if foo compiles");
+    check.dependOn(&exe_check.step);
+
     // This declares intent for the executable to be installed into the
     // standard location when the user invokes the "install" step (the default
     // step when running `zig build`).

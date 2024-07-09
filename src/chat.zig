@@ -6,19 +6,21 @@ const c = @import("init.zig");
 
 const Chat = @This();
 
+alloc: std.mem.Allocator,
+
 text_box: std.ArrayListUnmanaged(u8) = .{},
 messages: std.ArrayListUnmanaged([]const u8) = .{},
 
 is_open: bool = false,
 alpha: f32 = 0,
 
-pub fn deinit(self: *Chat, alloc: std.mem.Allocator) void {
-    self.text_box.deinit(alloc);
+pub fn deinit(self: *Chat) void {
+    self.text_box.deinit(self.alloc);
 
     for (self.messages.items) |msg| {
-        alloc.free(msg);
+        self.alloc.free(msg);
     }
-    self.messages.deinit(alloc);
+    self.messages.deinit(self.alloc);
 }
 
 pub fn open(self: *Chat) void {
@@ -26,12 +28,12 @@ pub fn open(self: *Chat) void {
     self.alpha = 5;
 }
 
-pub fn close(self: *Chat, alloc: std.mem.Allocator) !void {
+pub fn close(self: *Chat) !void {
     self.is_open = false;
-    self.text_box.clearAndFree(alloc);
+    self.text_box.clearAndFree(self.alloc);
 }
 
-pub fn update(self: *Chat, com: ztg.Commands, alloc: std.mem.Allocator, player_pos: ztg.Vec3, sender: *c.Player) !bool {
+pub fn update(self: *Chat, com: ztg.Commands, player_pos: ztg.Vec3, sender: *c.Player) !bool {
     if (!self.is_open) {
         self.alpha = @max(self.alpha - rl.GetFrameTime(), 0);
         return false;
@@ -40,12 +42,12 @@ pub fn update(self: *Chat, com: ztg.Commands, alloc: std.mem.Allocator, player_p
     const char: u8 = @intCast(rl.GetCharPressed());
 
     if (char != rl.KEY_NULL) {
-        try self.text_box.append(alloc, char);
+        try self.text_box.append(self.alloc, char);
     } else if (rl.IsKeyPressed(rl.KEY_BACKSPACE) and self.text_box.items.len > 0) {
         _ = self.text_box.swapRemove(self.text_box.items.len - 1);
     } else if (rl.IsKeyPressed(rl.KEY_ENTER)) {
         if (self.text_box.items.len > 0) {
-            try self.sendMessage(com, alloc, player_pos, sender, self.text_box.items);
+            try self.sendMessage(com, player_pos, sender, self.text_box.items);
         }
 
         return true;
@@ -54,12 +56,19 @@ pub fn update(self: *Chat, com: ztg.Commands, alloc: std.mem.Allocator, player_p
     return false;
 }
 
-fn sendMessage(self: *Chat, com: ztg.Commands, alloc: std.mem.Allocator, player_pos: ztg.Vec3, sender: *c.Player, text: []const u8) !void {
-    if (text[0] != '/') {
-        const text_dup = try std.mem.concat(alloc, u8, &.{ sender.name, ": ", self.text_box.items });
-        errdefer alloc.free(text_dup);
+pub fn sendMessageSystem(self: *Chat, comptime fmt: []const u8, args: anytype) !void {
+    const str = try std.fmt.allocPrint(self.alloc, fmt, args);
+    errdefer self.alloc.free(str);
 
-        try self.messages.append(alloc, text_dup);
+    try self.messages.append(self.alloc, str);
+}
+
+pub fn sendMessage(self: *Chat, com: ztg.Commands, player_pos: ztg.Vec3, sender: *c.Player, text: []const u8) !void {
+    if (text[0] != '/') {
+        const text_dup = try std.mem.concat(self.alloc, u8, &.{ sender.name, ": ", self.text_box.items });
+        errdefer self.alloc.free(text_dup);
+
+        try self.messages.append(self.alloc, text_dup);
         return;
     }
 
