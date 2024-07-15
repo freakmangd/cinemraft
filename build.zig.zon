@@ -16,10 +16,12 @@
     // internet connectivity.
     .dependencies = .{
         .zentig = .{
-            .path = "../zentig_ecs_testing/lib/zentig_ecs",
+            .url = "https://github.com/freakmangd/zentig_ecs/archive/062037d0c97b43798f142e0099dccc753ccf69db.tar.gz",
+            .hash = "1220557f41b8daf024503bb08f775fcb59255721b2af7c2305110076843f090903c3",
         },
         .zentig_raylib = .{
-            .path = "../zentig_ecs_testing/lib/zentig_raylib",
+            .url = "https://github.com/freakmangd/zentig_raylib/archive/d885d305181256e9d8e62e0622a480c684362a0b.tar.gz",
+            .hash = "122049793b6b22454a70adcfe636963f870eeca69d7426b669dad782ad79789a834a",
         },
         .raylib = .{
             .path = "lib/raylib",
