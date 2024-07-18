@@ -9,6 +9,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/main.zig"),
         .target = target,
         .optimize = optimize,
+        .strip = optimize != .Debug,
     });
     exe.root_module.addIncludePath(b.path("src"));
 
@@ -16,7 +17,10 @@ pub fn build(b: *std.Build) void {
     opts.addOption(bool, "timing", b.option(bool, "timing", "show timings") orelse false);
     exe.root_module.addOptions("opts", opts);
 
-    const znoise_dep = b.dependency("znoise", .{});
+    const znoise_dep = b.dependency("znoise", .{
+        .target = target,
+        .optimize = optimize,
+    });
 
     const zentig_dep = b.dependency("zentig", .{});
     const raylib_dep = b.dependency("raylib", .{
@@ -32,9 +36,15 @@ pub fn build(b: *std.Build) void {
     });
 
     const raylib = zrl.artifact("raylib");
-    if (target.result.os.tag == .linux) {
-        raylib.root_module.addCMacro("_GLFW_X11", "");
-        raylib.root_module.addCMacro("PLATFORM_DESKTOP_SDL", "");
+    switch (target.result.os.tag) {
+        .linux => {
+            raylib.root_module.addCMacro("_GLFW_X11", "");
+            raylib.root_module.addCMacro("PLATFORM_DESKTOP_SDL", "");
+        },
+        .windows => {
+            if (optimize != .Debug) exe.subsystem = .Windows;
+        },
+        else => {},
     }
     exe.linkLibrary(raylib);
 
