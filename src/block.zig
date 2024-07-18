@@ -69,8 +69,8 @@ fn setup(alloc: std.mem.Allocator) !void {
     block_sprite_atlas = rl.LoadTexture("assets/block_art.png");
 
     shader = rl.LoadShader(
-        "src/shaders/block_vertex.glsl",
-        "src/shaders/block_fragment.glsl",
+        "assets/shaders/block_vertex.glsl",
+        "assets/shaders/block_fragment.glsl",
     );
     shader.locs[rl.SHADER_LOC_MATRIX_MVP] = rl.GetShaderLocation(shader, "mvp");
     shader.locs[rl.SHADER_LOC_VECTOR_VIEW] = rl.GetShaderLocation(shader, "viewPos");
